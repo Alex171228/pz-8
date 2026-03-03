@@ -125,8 +125,8 @@ curl -i -X POST http://<SERVER_IP>:8082/v1/tasks \
 ### Установка
 
 ```bash
-git clone https://github.com/Alex171228/pz1.2.git
-cd pz1.2
+git clone https://github.com/Alex171228/pz3.2.git
+cd pz3.2
 go mod download
 ```
 
