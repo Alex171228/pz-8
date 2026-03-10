@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"pz1.2/services/tasks/internal/client/authclient"
@@ -60,8 +61,9 @@ func main() {
 	mux := http.NewServeMux()
 	handler := taskshttp.NewHandler(taskService, authVerifier, log)
 	handler.RegisterRoutes(mux)
+	mux.Handle("GET /metrics", promhttp.Handler())
 
-	httpHandler := middleware.RequestID(middleware.AccessLog(log)(mux))
+	httpHandler := middleware.Metrics(middleware.RequestID(middleware.AccessLog(log)(mux)))
 
 	server := &http.Server{
 		Addr:         ":" + port,

@@ -1,182 +1,205 @@
-# Практическое задание 3
+# Практическое задание 4
 ## Шишков А.Д. ЭФМО-02-22
 ## Тема
-Структурированное логирование в серверных приложениях.
+Настройка Prometheus + Grafana для метрик. Инструментирование и мониторинг.
 
 ## Цель
-Научиться внедрять структурированные логи в сервис и применять единый стандарт логирования для диагностики и эксплуатации.
+Научиться инструментировать сервис метриками, настраивать сбор через Prometheus и визуализацию в Grafana.
 
 ---
 
-## 1. Выбор логгера
+## 1. Описание метрик
 
-Выбран **zap** (`go.uber.org/zap`).
+В сервис Tasks добавлены 3 метрики через `github.com/prometheus/client_golang`:
 
-Причины:
+### http_requests_total (Counter)
 
-- Выдаёт JSON по умолчанию — логи сразу готовы для парсинга (ELK, Loki, jq).
-- Высокая производительность — zero-allocation в hot path, что важно для микросервисов под нагрузкой.
-- Типизированные поля (`zap.String`, `zap.Int`, `zap.Error`) исключают случайную запись чувствительных данных через `fmt.Sprintf`.
-- Широко используется в production Go-проектах.
+Общее количество HTTP-запросов. Увеличивается на 1 при каждом завершённом запросе.
 
----
+| Label | Описание | Примеры значений |
+|-------|----------|-----------------|
+| `method` | HTTP-метод | GET, POST, PATCH, DELETE |
+| `route` | Нормализованный маршрут | `/v1/tasks`, `/v1/tasks/:id` |
+| `status` | Код ответа | 200, 201, 401, 404, 503 |
 
-## 2. Стандарт полей логов
+### http_request_duration_seconds (Histogram)
 
-Во всех сервисах (auth, tasks) используется единая схема полей:
+Длительность обработки запроса в секундах. Buckets: 0.01, 0.05, 0.1, 0.3, 1, 3.
 
-### Обязательные поля
+| Label | Описание | Примеры значений |
+|-------|----------|-----------------|
+| `method` | HTTP-метод | GET, POST, PATCH, DELETE |
+| `route` | Нормализованный маршрут | `/v1/tasks`, `/v1/tasks/:id` |
 
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `level` | string | Уровень: debug / info / warn / error |
-| `ts` | string | Время события (ISO 8601) |
-| `msg` | string | Описание события |
-| `service` | string | Имя сервиса: `auth` или `tasks` |
-| `request_id` | string | X-Request-ID (из заголовка или сгенерированный UUID) |
+### http_in_flight_requests (Gauge)
 
-### Поля access log (middleware)
+Количество запросов, обрабатываемых в данный момент. Увеличивается при входе запроса, уменьшается при завершении.
 
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `method` | string | HTTP-метод (GET, POST, PATCH, DELETE) |
-| `path` | string | Путь запроса (`/v1/tasks`) |
-| `status` | int | Код ответа (200, 401, 503...) |
-| `duration_ms` | float | Длительность обработки в миллисекундах |
-| `remote_ip` | string | IP-адрес клиента |
+Labels отсутствуют — одно глобальное значение для всего сервиса.
 
-### Поля для ошибок и контекста
+### Нормализация route
 
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `error` | string | Текст ошибки (без секретов) |
-| `component` | string | Компонент: `handler`, `auth_middleware`, `auth_client_http`, `auth_client_grpc` |
-| `task_id` | string | ID задачи (при CRUD-операциях) |
-| `subject` | string | Субъект из токена (при успешной верификации) |
-| `has_auth` | bool | Факт наличия токена (без самого значения) |
-
-### Что запрещено логировать
-
-- Пароли
-- Токены доступа и refresh-токены
-- Секреты и ключи
-- Содержимое cookies
+Для предотвращения взрыва кардинальности путь нормализуется:
+- `/v1/tasks` → `/v1/tasks`
+- `/v1/tasks/abc123` → `/v1/tasks/:id`
 
 ---
 
-## 3. Примеры лог-событий
+## 2. Пример вывода /metrics
 
-### 3.1. Успешный запрос — создание задачи
-
-
-```bash
-curl -i -X POST http://<SERVER_IP>:8082/v1/tasks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer demo-token" \
-  -H "X-Request-ID: pz19-002" \
-  -d '{"title":"Logs","description":"Implement zap","due_date":"2026-01-12"}'
-```
-
-201 Created. В логах Tasks видно цепочку: calling auth HTTP verify → auth HTTP verify: success → token verified → task created → request completed. В логах Auth — token verified → request completed (200).
-
-![Успешный запрос — создание задачи](docs/images/3_1_success.png)
-
-
-### 3.2. Запрос с ошибкой — невалидный токен
+Команда:
 
 ```bash
-curl -i http://<SERVER_IP>:8082/v1/tasks \
-  -H "Authorization: Bearer invalid-token" \
-  -H "X-Request-ID: pz19-003"
+curl -s http://<SERVER_IP>:8082/metrics | head -30
 ```
 
-401 Unauthorized. В логах Tasks уровень `warn` — `auth HTTP verify: unauthorized`, `invalid token`. Токен не попадает в логи (только `has_auth: true`). В логах Auth — `token verification failed` (уровень `warn`).
-
-
-![Запрос с невалидным токеном](docs/images/3_2_error.png)
-
-
-### 3.3. Межсервисный вызов — корреляция по request-id
-
-Шаг 1 — получить токен:
-
-```bash
-curl -s -X POST http://<SERVER_IP>:8081/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -H "X-Request-ID: pz19-010" \
-  -d '{"username":"student","password":"student"}'
-```
-
-Шаг 2 — создать задачу (request-id видно в обоих сервисах):
-
-```bash
-curl -i -X POST http://<SERVER_IP>:8082/v1/tasks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer demo-token" \
-  -H "X-Request-ID: pz19-011" \
-  -d '{"title":"Cross-service","description":"Test correlation","due_date":"2026-01-12"}'
-```
-
-По `request_id: "pz19-011"` можно найти связанные события в логах обоих сервисов: Auth (`service: auth`, verify) и Tasks (`service: tasks`, task created).
-
-![Корреляция request-id](docs/images/3_3_correlation.png)
-
+<!-- Вставить скриншот: вывод /metrics (10-20 строк с http_requests_total, http_request_duration_seconds, http_in_flight_requests) -->
 
 ---
 
-## 4. Инструкция запуска и проверки
+## 3. Docker Compose и Prometheus
 
-### Установка
+### docker-compose.yml
 
-```bash
-git clone https://github.com/Alex171228/pz3.2.git
-cd pz3.2
-go mod download
+Файл `deploy/monitoring/docker-compose.yml` поднимает 3 контейнера:
+
+| Сервис | Образ | Порт | Назначение |
+|--------|-------|------|------------|
+| `tasks` | сборка из Dockerfile | 8082 | Микросервис задач с endpoint `/metrics` |
+| `prometheus` | `prom/prometheus:latest` | 9090 | Сбор метрик каждые 5 секунд |
+| `grafana` | `grafana/grafana:latest` | 3000 | Визуализация (admin/admin) |
+
+Все контейнеры объединены в сеть `monitoring`. Grafana автоматически провизионирует Prometheus как datasource и подключает готовый dashboard.
+
+### prometheus.yml
+
+```yaml
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "tasks"
+    static_configs:
+      - targets: ["tasks:8082"]
 ```
 
-### Запуск (2 терминала)
+Target — контейнер `tasks` на порту 8082. Prometheus обращается к `http://tasks:8082/metrics` каждые 5 секунд.
 
-**Терминал 1 — Auth Service:**
+---
+
+## 4. Графики в Grafana
+
+Dashboard автоматически провизионируется при запуске. Содержит 3 панели:
+
+### 4.1. RPS (Requests Per Second)
+
+PromQL:
+
+```promql
+sum(rate(http_requests_total[1m])) by (route)
+```
+
+Показывает количество запросов в секунду с разбивкой по маршрутам.
+
+<!-- Вставить скриншот: панель RPS в Grafana -->
+
+### 4.2. Error Rate (4xx / 5xx)
+
+PromQL:
+
+```promql
+sum(rate(http_requests_total{status=~"4..|5.."}[1m])) by (status)
+```
+
+Показывает частоту ошибочных ответов с разбивкой по кодам (401, 404, 503...).
+
+<!-- Вставить скриншот: панель Errors в Grafana -->
+
+### 4.3. Latency p95
+
+PromQL:
+
+```promql
+histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1m])) by (le, route))
+```
+
+Показывает 95-й перцентиль задержки — время, в которое укладываются 95% запросов.
+
+<!-- Вставить скриншот: панель Latency p95 в Grafana -->
+
+---
+
+## 5. Инструкция запуска
+
+### Предварительные требования
+
+- Docker и Docker Compose установлены на сервере
+- Auth-сервис запущен на порту 8081 (на хост-машине)
+
+### Запуск Auth-сервиса (на хосте)
 
 ```bash
+cd ~/pz4
 export AUTH_PORT=8081
 export AUTH_GRPC_PORT=50051
-go run ./services/auth/cmd/auth
+go run ./services/auth/cmd/auth &
 ```
 
-**Терминал 2 — Tasks Service:**
+### Запуск Tasks + Prometheus + Grafana
 
 ```bash
-export TASKS_PORT=8082
-go run ./services/tasks/cmd/tasks
+cd ~/pz4/deploy/monitoring
+docker compose up -d --build
 ```
 
-### Проверка (3-й терминал)
+### Генерация нагрузки (для появления данных на графиках)
 
-Выполните запросы из пункта 3 и посмотрите логи в консоли сервера для проверки работы.
+Успешные запросы:
+
+```bash
+for i in $(seq 1 50); do
+  curl -s http://localhost:8082/v1/tasks \
+    -H "Authorization: Bearer demo-token" > /dev/null
+done
+```
+
+Ошибочные запросы (401):
+
+```bash
+for i in $(seq 1 20); do
+  curl -s http://localhost:8082/v1/tasks \
+    -H "Authorization: Bearer wrong" > /dev/null
+done
+```
+
+### Проверка
+
+| Что | URL |
+|-----|-----|
+| Метрики Tasks | http://localhost:8082/metrics |
+| Prometheus targets | http://localhost:9090/targets |
+| Grafana dashboard | http://localhost:3000 (admin / admin) |
 
 ---
 
-## 5. Контрольные вопросы
+## 6. Контрольные вопросы
 
-**1. Почему структурированные логи удобнее строковых?**
+**1. Зачем приложение отдаёт метрики на отдельном пути?**
 
-Структурированные логи (JSON) можно парсить, фильтровать и агрегировать автоматически. Строковые логи требуют regex для извлечения данных, что ненадёжно и медленно.
+Endpoint `/metrics` отделён от бизнес-логики, чтобы Prometheus мог собирать метрики без авторизации и не создавая нагрузку на основные хендлеры. Это также позволяет закрыть `/metrics` на уровне сети (firewall), не затрагивая API.
 
-**2. Что такое request-id и как он помогает при диагностике?**
+**2. Чем Counter отличается от Gauge?**
 
-X-Request-ID — уникальный идентификатор запроса, который прокидывается через все сервисы в цепочке вызовов. Позволяет по одному ID найти все связанные лог-события в разных сервисах.
+Counter — монотонно растущий счётчик (только увеличивается). Gauge — значение, которое может расти и падать (например, текущее число активных запросов). Counter подходит для подсчёта событий, Gauge — для текущего состояния.
 
-**3. Какие поля вы считаете обязательными для access log?**
+**3. Почему latency лучше мерить histogram, а не средним?**
 
-`request_id`, `method`, `path`, `status`, `duration_ms`, `service`. Без них невозможно ответить на базовые вопросы: какой запрос, куда, как быстро, с каким результатом.
+Среднее скрывает выбросы: если 99% запросов за 10ms, а 1% за 10s, среднее будет ~110ms — выглядит нормально, но 1% пользователей ждут 10 секунд. Histogram позволяет вычислять перцентили (p95, p99), которые показывают реальную картину.
 
-**4. Почему нельзя писать токены и пароли в логи?**
+**4. Что такое labels и почему их не должно быть слишком много?**
 
-Логи часто хранятся в открытом виде, реплицируются в системы мониторинга, доступны широкому кругу разработчиков. Утечка токена из логов = компрометация пользователя.
+Labels — ключ-значение пары, по которым можно фильтровать и группировать метрики. Каждая уникальная комбинация labels создаёт отдельный time series в Prometheus. Слишком много labels (например, user_id) приводит к взрыву кардинальности — миллионы time series, что перегружает память и хранилище.
 
-**5. Что логировать в ERROR, а что в INFO/WARN?**
+**5. Что значат p95/p99 и чем они полезны?**
 
-- **INFO** — штатные события: запрос завершён, задача создана, сервер запущен.
-- **WARN** — ожидаемые проблемы: невалидный токен, задача не найдена, неверный формат.
-- **ERROR** — неожиданные сбои: auth недоступен, ошибка БД, таймаут межсервисного вызова.
+p95 — значение, ниже которого находятся 95% наблюдений. p99 — 99%. Если p95 latency = 200ms, значит 95% запросов обрабатываются быстрее 200ms. Это стандартная метрика для SLA/SLO: «99% запросов должны обрабатываться быстрее 500ms».
