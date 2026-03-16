@@ -135,24 +135,19 @@ db.Query("SELECT * FROM tasks WHERE title = $1", userInput)
 
 Параметр `$1` передаётся отдельно от SQL — драйвер экранирует значение. Инъекция невозможна: строка `' OR '1'='1` ищется как обычный title и ничего не находит.
 
-### Проверка
+### Проверка (с компьютера, IP сервера <SERVER_IP>)
 
-Создать задачу, затем попытаться инъекцию:
+Создать задачу, затем попытаться выполнить инъекцию:
 
 ```bash
 # Создать задачу
-curl -k -X POST https://localhost:8443/v1/tasks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer demo-token" \
-  -d '{"title":"SQL safe","description":"parameterized","due_date":"2026-01-15"}'
+curl.exe -k -X POST https://<SERVER_IP>:8443/v1/tasks -H "Content-Type: application/json" -H "Authorization: Bearer demo-token" -d "{\"title\":\"SQL safe\",\"description\":\"parameterized\",\"due_date\":\"2026-01-15\"}"
 
 # Нормальный поиск — находит задачу
-curl -k "https://localhost:8443/v1/tasks/search?title=SQL%20safe" \
-  -H "Authorization: Bearer demo-token"
+curl.exe -k "https://<SERVER_IP>:8443/v1/tasks/search?title=SQL%20safe" -H "Authorization: Bearer demo-token"
 
 # Попытка SQL-инъекции — пустой результат (защита работает)
-curl -k "https://localhost:8443/v1/tasks/search?title=%27%20OR%20%271%27%3D%271" \
-  -H "Authorization: Bearer demo-token"
+curl.exe -k "https://<SERVER_IP>:8443/v1/tasks/search?title=%27%20OR%20%271%27%3D%271" -H "Authorization: Bearer demo-token"
 ```
 
 <!-- Вставить скриншот: результат 3 curl-запросов (создание + нормальный поиск + инъекция) -->
@@ -161,44 +156,65 @@ curl -k "https://localhost:8443/v1/tasks/search?title=%27%20OR%20%271%27%3D%271"
 
 ## 6. Инструкция запуска
 
-### Шаг 1. Клонировать и подготовить
+Сервер — Ubuntu, тестирование — с компьютера. Замените `<SERVER_IP>` на IP вашего сервера.
+
+### На сервере
 
 ```bash
-git clone <repo-url> ~/pz5
+# 1. Клонировать
+git clone https://github.com/Alex171228/pz-5.2.git ~/pz5
 cd ~/pz5
-```
+go mod download
 
-### Шаг 2. Сгенерировать сертификат
-
-```bash
+# 2. Сгенерировать сертификат
 cd deploy/tls
 bash generate-cert.sh
-```
 
-### Шаг 3. Запустить Auth-сервис (на хосте)
+# 3. Убить старые процессы
+pkill -f "go run" 2>/dev/null
+fuser -k 8081/tcp 8082/tcp 8443/tcp 50051/tcp 2>/dev/null
+sleep 1
 
-```bash
+# 4. Запустить Auth (на хосте)
 cd ~/pz5
-go run ./services/auth/cmd/auth &
-```
+go run ./services/auth/cmd/auth 2>&1 &
+sleep 2
 
-### Шаг 4. Запустить Tasks + PostgreSQL + NGINX
-
-```bash
+# 5. Запустить Tasks + PostgreSQL + NGINX
 cd ~/pz5/deploy/tls
 docker compose up -d --build
+
+# 6. Открыть порт HTTPS
+sudo ufw allow 8443/tcp
 ```
 
-### Шаг 5. Проверить
+### С компьютера (проверка)
 
-| Что | Команда / URL |
-|-----|---------------|
-| HTTPS через NGINX | `curl -k https://localhost:8443/v1/tasks -H "Authorization: Bearer demo-token"` |
-| Создать задачу | `curl -k -X POST https://localhost:8443/v1/tasks -H "Content-Type: application/json" -H "Authorization: Bearer demo-token" -d '{"title":"Test"}'` |
-| Поиск по title | `curl -k "https://localhost:8443/v1/tasks/search?title=Test" -H "Authorization: Bearer demo-token"` |
-| SQLi (должен вернуть пустой массив) | `curl -k "https://localhost:8443/v1/tasks/search?title=%27%20OR%20%271%27%3D%271" -H "Authorization: Bearer demo-token"` |
+Создать задачу:
 
-### Остановка
+```bash
+curl.exe -k -X POST https://<SERVER_IP>:8443/v1/tasks -H "Content-Type: application/json" -H "Authorization: Bearer demo-token" -d "{\"title\":\"SQL safe\",\"description\":\"parameterized\",\"due_date\":\"2026-01-15\"}"
+```
+
+Получить все задачи через HTTPS:
+
+```bash
+curl.exe -k https://<SERVER_IP>:8443/v1/tasks -H "Authorization: Bearer demo-token"
+```
+
+Поиск по title (нормальный):
+
+```bash
+curl.exe -k "https://<SERVER_IP>:8443/v1/tasks/search?title=SQL%20safe" -H "Authorization: Bearer demo-token"
+```
+
+Попытка SQL-инъекции (должен вернуть пустой массив):
+
+```bash
+curl.exe -k "https://<SERVER_IP>:8443/v1/tasks/search?title=%27%20OR%20%271%27%3D%271" -H "Authorization: Bearer demo-token"
+```
+
+### Остановка (на сервере)
 
 ```bash
 cd ~/pz5/deploy/tls
