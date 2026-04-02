@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Профиль</title>
+</head>
+<body>
+    <h1>Редактирование профиля</h1>
+
+    <p>Текущее имя: <strong>{{.Name}}</strong></p>
+
+    <form method="POST" action="/profile">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label for="name">Новое имя:</label>
+        <input type="text" id="name" name="name" value="{{.Name}}">
+        <button type="submit">Сохранить</button>
+    </form>
+
+    <p><a href="/hello">Открыть страницу приветствия</a></p>
+    <p><a href="/comments">Комментарии</a></p>
+    <p><a href="/logout">Выйти</a></p>
+</body>
+</html>
