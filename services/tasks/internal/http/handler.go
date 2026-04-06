@@ -27,12 +27,20 @@ func NewHandler(taskService *service.TaskService, authVerifier authclient.AuthVe
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /health", h.handleHealth)
 	mux.HandleFunc("POST /v1/tasks", h.authMiddleware(h.handleCreate))
 	mux.HandleFunc("GET /v1/tasks", h.authMiddleware(h.handleGetAll))
 	mux.HandleFunc("GET /v1/tasks/search", h.authMiddleware(h.handleSearch))
 	mux.HandleFunc("GET /v1/tasks/{id}", h.authMiddleware(h.handleGetByID))
 	mux.HandleFunc("PATCH /v1/tasks/{id}", h.authMiddleware(h.handleUpdate))
 	mux.HandleFunc("DELETE /v1/tasks/{id}", h.authMiddleware(h.handleDelete))
+}
+
+func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
+	h.respondJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"service": "tasks",
+	})
 }
 
 func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {

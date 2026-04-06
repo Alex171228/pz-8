@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: tasks_db
+    environment:
+      POSTGRES_USER: tasks
+      POSTGRES_PASSWORD: tasks
+      POSTGRES_DB: tasks
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasks"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  tasks:
+    build:
+      context: ..
+      dockerfile: services/tasks/Dockerfile
+    container_name: tasks_service
+    ports:
+      - "8082:8082"
+    environment:
+      TASKS_PORT: "8082"
+      AUTH_MODE: "http"
+      AUTH_BASE_URL: "http://host.docker.internal:8081"
+      DATABASE_URL: "postgres://tasks:tasks@db:5432/tasks?sslmode=disable"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
