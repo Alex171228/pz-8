@@ -218,7 +218,7 @@ docker compose up -d
 
 **Pipeline успешно выполнен:**
 
-<img width="1350" height="541" alt="image" src="https://github.com/user-attachments/assets/706ce908-c5ca-41d4-8f53-d57a156a6f4a" />
-<img width="1350" height="541" alt="image" src="https://github.com/user-attachments/assets/706ce908-c5ca-41d4-8f53-d57a156a6f4a" />
+<img width="1350" height="541" alt="image" src="https://github.com/user-attachments/assets/706ce908-c5ca-41d4-8f53-d57a156a6f4a" /> 
+
 
 
