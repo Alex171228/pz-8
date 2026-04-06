@@ -1,10 +1,10 @@
 # Практическое задание 8
-## Шишков А.Д. ЭФМО-02-22
+## Шишков А.Д. ЭФМО-02-25
 ## Тема
-Настройка GitHub Actions для сборки приложения.
+Настройка GitHub Actions / GitLab CI для деплоя приложения
 
 ## Цель
-Освоить основы CI/CD для backend-проекта на Go, настроить автоматический pipeline для запуска тестов, сборки и упаковки Docker-образа.
+Освоить основы CI/CD для backend-проекта на Go, научиться настраивать автоматический pipeline для проверки, сборки, упаковки Docker-образа и подготовки приложения к доставке.
 
 ---
 
@@ -174,7 +174,7 @@ docker build -t techip-tasks:${{ github.sha }} .
 
 ## 6. Хранение секретов
 
-Секреты (токены, пароли, SSH-ключи) хранятся в **GitHub Secrets** (Settings → Secrets and variables → Actions), а не в репозитории.
+Секреты хранятся в GitHub Secrets (Settings → Secrets and variables → Actions), а не в репозитории.
 
 Использование в pipeline:
 
@@ -184,13 +184,13 @@ docker build -t techip-tasks:${{ github.sha }} .
 ```
 
 Принципы:
-- секреты **не попадают** в репозиторий и не отображаются в логах;
+- секреты не попадают в репозиторий и не отображаются в логах;
 - передаются как переменные окружения только во время выполнения pipeline;
 - для публикации Docker-образа в registry потребуются `REGISTRY_USERNAME` и `REGISTRY_PASSWORD`.
 
 ---
 
-## 7. Публикация образа в registry (опционально)
+## 7. Публикация образа в registry
 
 Для публикации образа в GitHub Container Registry (ghcr.io) job `docker-build` дополняется шагами:
 
@@ -218,7 +218,8 @@ docker compose up -d
 
 **Pipeline успешно выполнен:**
 
-<img width="1350" height="541" alt="image" src="https://github.com/user-attachments/assets/706ce908-c5ca-41d4-8f53-d57a156a6f4a" /> 
+<img width="1365" height="544" alt="image" src="https://github.com/user-attachments/assets/2f282fd4-0b31-40cc-9be4-cb4bbfe92f66" /> 
+ 
 
 
 
